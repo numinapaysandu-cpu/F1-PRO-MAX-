@@ -1,5 +1,7 @@
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const miniCanvas = document.getElementById('minimap-canvas');
+const miniCtx = miniCanvas ? miniCanvas.getContext('2d') : null;
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -8,7 +10,6 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// --- PARRILLA OFICIAL 2026 (11 ESCUDERÍAS · 22 PILOTOS) ---
 const TEAMS_2026 = [
   { id: 'mercedes', name: 'Mercedes-AMG Petronas', color: '#00d2be', accent: '#111', pace: 1.015, d1: { num: 12, name: 'Kimi Antonelli' }, d2: { num: 63, name: 'George Russell' } },
   { id: 'ferrari', name: 'Scuderia Ferrari HP', color: '#e10600', accent: '#fff200', pace: 1.008, d1: { num: 16, name: 'Charles Leclerc' }, d2: { num: 44, name: 'Lewis Hamilton' } },
@@ -23,7 +24,6 @@ const TEAMS_2026 = [
   { id: 'cadillac', name: 'Cadillac Formula 1 Team', color: '#2c2f33', accent: '#d4af37', pace: 0.955, d1: { num: 11, name: 'Sergio Pérez' }, d2: { num: 77, name: 'Valtteri Bottas' } }
 ];
 
-// --- CALENDARIO 2026 EN ORDEN ---
 const CALENDAR_2026 = [
   { round: 1, gp: 'Australia - Albert Park', desert: false, cornerIntensity: 1.05, topSpeedScale: 1.02, seed: 11 },
   { round: 2, gp: 'China - Shanghai', desert: false, cornerIntensity: 1.12, topSpeedScale: 1.03, seed: 22 },
@@ -75,10 +75,7 @@ const mapSelect = document.getElementById('map-select');
 const weatherPreview = document.getElementById('weather-preview');
 const weatherHint = document.getElementById('weather-hint');
 
-let selectedTeamIndex = 0;
-let selectedSeat = 1;
-let selectedGpIndex = 0;
-let currentWeather = null;
+let selectedTeamIndex = 0, selectedSeat = 1, selectedGpIndex = 0, currentWeather = null;
 
 function generateRandomWeather(gp) {
   const r = Math.random();
@@ -160,11 +157,46 @@ function updateEngineSound(speed, maxSpeed, isDrifting) {
   gainNode.gain.setTargetAtTime(0.03 + ratio * 0.06, audioCtx.currentTime, 0.05);
 }
 
-let trackPoints = [], cornerZoneFlags = [], skidMarks = [], rainDrops = [];
-const TRACK_WIDTH = 170, TOTAL_LAPS = 3;
+let trackPoints = [], cornerZoneFlags = [], skidMarks = [], rainDrops = [], particles = [], sceneryProps = [];
+let asphaltPattern = null;
+const TRACK_WIDTH = 174, TOTAL_LAPS = 3;
+
+function createAsphaltPattern() {
+  if (asphaltPattern) return asphaltPattern;
+  const pCanvas = document.createElement('canvas');
+  pCanvas.width = 48; pCanvas.height = 48;
+  const pCtx = pCanvas.getContext('2d');
+  pCtx.fillStyle = '#2d2d32';
+  pCtx.fillRect(0, 0, 48, 48);
+  for (let i = 0; i < 420; i++) {
+    const gx = (i * 19) % 48;
+    const gy = (i * 37) % 48;
+    pCtx.fillStyle = (i % 3 === 0) ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.14)';
+    pCtx.fillRect(gx, gy, 2, 2);
+  }
+  asphaltPattern = ctx.createPattern(pCanvas, 'repeat');
+  return asphaltPattern;
+}
+
+function buildSceneryProps(gp, weather) {
+  sceneryProps = [];
+  const isDesert = weather.type === 'desert';
+  for (let i = 0; i < 36; i++) {
+    const angle = (i / 36) * Math.PI * 2 + (gp.seed % 10) * 0.13;
+    const ringFactor = 1.18 + ((i * 7) % 5) * 0.08;
+    const px = Math.cos(angle) * 700 * ringFactor;
+    const py = Math.sin(angle) * 480 * ringFactor;
+    if (py < -40 && py > -190 && px > -150 && px < 790) continue;
+    sceneryProps.push({
+      x: px, y: py,
+      radius: 14 + ((i * 11) % 12),
+      kind: isDesert ? (i % 2 === 0 ? 'dune' : 'rock') : 'tree'
+    });
+  }
+}
 
 function buildCircuit(gp) {
-  skidMarks = []; rainDrops = [];
+  skidMarks = []; rainDrops = []; particles = [];
   const pts = [], count = 12, baseRx = 680, baseRy = 460;
   for (let i = 0; i < count; i++) {
     const t = (i / count) * Math.PI * 2;
@@ -187,6 +219,7 @@ function buildCircuit(gp) {
     if (diff > Math.PI) diff = Math.PI * 2 - diff;
     return diff > 0.42;
   });
+
   if (currentWeather.rainPct > 0) {
     const dropCount = currentWeather.rainPct * 18;
     for (let i = 0; i < dropCount; i++) {
@@ -197,6 +230,28 @@ function buildCircuit(gp) {
         speed: 7 + currentWeather.rainPct * 0.9
       });
     }
+  }
+  buildSceneryProps(gp, currentWeather);
+}
+
+function spawnParticle(x, y, vx, vy, color, radius, life) {
+  if (particles.length > 260) particles.shift();
+  particles.push({ x, y, vx, vy, color, radius, life, maxLife: life });
+}
+
+function updateAndDrawParticles(ctx) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.life--;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    const alpha = Math.max(0, p.life / p.maxLife);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.radius * (1.2 - alpha * 0.4), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 }
 
@@ -222,8 +277,7 @@ window.addEventListener('keyup', (e) => {
   if (e.key === 'ArrowUp' || e.key === 'w') keys.gas = false;
   if (e.key === 'ArrowDown' || e.key === 's') keys.brake = false;
 });
-
-class Car {
+ class Car {
   constructor(x, y, angle, driverData, teamData, isPlayer = false, tireType = 'medium', engineMap = 'cloudy') {
     this.x = x; this.y = y; this.angle = angle;
     this.vx = 0; this.vy = 0; this.speed = 0;
@@ -232,7 +286,7 @@ class Car {
     this.isPlayer = isPlayer; this.tireType = tireType; this.engineMap = engineMap;
     this.baseMaxSpeed = 9.8; this.tire = 100; this.fuel = 100;
     this.lap = 1; this.currentWaypoint = 1; this.totalProgress = 0;
-    this.finished = false; this.isDrifting = false; this.slipFactor = 0;
+    this.finished = false; this.isDrifting = false; this.braking = false; this.slipFactor = 0;
   }
 
   getInCornerZone() {
@@ -269,7 +323,8 @@ class Car {
       isSuboptimal: (!isIdealTire || !isIdealMap)
     };
   }
-    update(gp, weather) {
+
+  update(gp, weather) {
     if (this.finished) {
       this.vx *= 0.94; this.vy *= 0.94; this.x += this.vx; this.y += this.vy;
       this.speed = Math.hypot(this.vx, this.vy);
@@ -302,6 +357,8 @@ class Car {
       else if (this.speed > effectiveMaxSpeed * cornerSlowdown * 1.12) brakingInput = 0.6;
     }
 
+    this.braking = brakingInput > 0.2;
+
     const forwardX = Math.cos(this.angle), forwardY = Math.sin(this.angle);
     const rightX = -forwardY, rightY = forwardX;
     let forwardVel = this.vx * forwardX + this.vy * forwardY;
@@ -332,8 +389,23 @@ class Car {
     this.x += this.vx; this.y += this.vy;
     this.speed = Math.hypot(this.vx, this.vy);
 
-    if (this.isDrifting && skidMarks.length < 450) {
-      skidMarks.push({ x: this.x - nfx * 12, y: this.y - nfy * 12, angle: this.angle, alpha: Math.min(0.55, this.slipFactor * 0.14) });
+    if (this.isDrifting) {
+      if (skidMarks.length < 480) {
+        skidMarks.push({ x: this.x - nfx * 12, y: this.y - nfy * 12, angle: this.angle, alpha: Math.min(0.55, this.slipFactor * 0.14) });
+      }
+      spawnParticle(this.x - nfx * 14 + nrx * 8, this.y - nfy * 14 + nry * 8, -this.vx * 0.15, -this.vy * 0.15, 'rgba(220,220,220,0.45)', 3.2, 14);
+    }
+
+    if (weather.rainPct > 0 && this.speed > 2.5 && Math.random() < 0.65) {
+      spawnParticle(
+        this.x - nfx * 18 + (Math.random() - 0.5) * 14,
+        this.y - nfy * 18 + (Math.random() - 0.5) * 14,
+        -this.vx * 0.25 + (Math.random() - 0.5) * 1.2,
+        -this.vy * 0.25 + (Math.random() - 0.5) * 1.2,
+        'rgba(215, 238, 255, 0.65)',
+        2.5 + weather.rainPct * 0.25,
+        12
+      );
     }
 
     if (this.speed > 1.2) {
@@ -376,43 +448,103 @@ class Car {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
-    ctx.fillStyle = 'rgba(0,0,0,0.42)';
-    ctx.fillRect(-18, -9, 38, 22);
 
+    // Sombra aerodinámica
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    ctx.ellipse(2, 3, 23, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Brazos de suspensión
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(10, 0); ctx.lineTo(11, -11);
+    ctx.moveTo(10, 0); ctx.lineTo(11, 11);
+    ctx.moveTo(-11, 0); ctx.lineTo(-12, -12);
+    ctx.moveTo(-11, 0); ctx.lineTo(-12, 12);
+    ctx.stroke();
+
+    // 4 ruedas con banda del compuesto activo
     const tireColor = TIRE_SPECS[this.tireType].color;
-    ctx.fillStyle = '#111';
-    ctx.fillRect(-14, -12, 10, 5); ctx.fillRect(-14, 7, 10, 5);
-    ctx.fillRect(8, -11, 9, 4);  ctx.fillRect(8, 7, 9, 4);
+    const wheels = [
+      { x: -15, y: -13, w: 11, h: 5 },
+      { x: -15, y: 8,   w: 11, h: 5 },
+      { x: 8,   y: -12, w: 10, h: 4.5 },
+      { x: 8,   y: 7.5, w: 10, h: 4.5 }
+    ];
+    wheels.forEach(wh => {
+      ctx.fillStyle = '#121214';
+      ctx.fillRect(wh.x, wh.y, wh.w, wh.h);
+      ctx.fillStyle = tireColor;
+      ctx.fillRect(wh.x + 3, wh.y, 4, 1.5);
+      ctx.fillRect(wh.x + 3, wh.y + wh.h - 1.5, 4, 1.5);
+    });
 
-    ctx.fillStyle = tireColor;
-    ctx.fillRect(-11, -12, 4, 2); ctx.fillRect(-11, 10, 4, 2);
-    ctx.fillRect(10, -11, 4, 2);  ctx.fillRect(10, 9, 4, 2);
+    // Suelo y pontones esculpidos con degradado
+    const bodyGrad = ctx.createLinearGradient(0, -8, 0, 8);
+    bodyGrad.addColorStop(0, this.color);
+    bodyGrad.addColorStop(0.5, '#ffffff');
+    bodyGrad.addColorStop(1, this.color);
 
     ctx.fillStyle = this.color;
     ctx.beginPath();
-    ctx.moveTo(22, 0); ctx.lineTo(8, -6); ctx.lineTo(-16, -7); ctx.lineTo(-16, 7); ctx.lineTo(8, 6);
+    ctx.moveTo(23, 0);
+    ctx.lineTo(12, -4);
+    ctx.lineTo(3, -8.5);
+    ctx.lineTo(-17, -7.5);
+    ctx.lineTo(-17, 7.5);
+    ctx.lineTo(3, 8.5);
+    ctx.lineTo(12, 4);
     ctx.closePath();
     ctx.fill();
 
+    // Franja central de escudería
     ctx.fillStyle = this.accent;
-    ctx.fillRect(-6, -4, 10, 8);
-    ctx.fillStyle = '#222';
-    ctx.fillRect(18, -10, 4, 20); ctx.fillRect(-19, -9, 4, 18);
+    ctx.fillRect(-10, -3.5, 16, 7);
 
-    ctx.fillStyle = this.isPlayer ? '#ffcc00' : '#ffffff';
-    ctx.beginPath(); ctx.arc(-2, 0, 3.5, 0, Math.PI * 2); ctx.fill();
+    // Alerón delantero multi-plano y trasero
+    ctx.fillStyle = '#1e2026';
+    ctx.fillRect(19, -11, 4, 22);
+    ctx.fillStyle = this.color;
+    ctx.fillRect(21, -11, 2, 22);
+
+    ctx.fillStyle = '#1e2026';
+    ctx.fillRect(-20, -10, 4.5, 20);
+
+    // Luz trasera LED de lluvia / frenada
+    if (this.braking || currentWeather.rainPct > 0) {
+      const blink = Math.floor(Date.now() / 120) % 2 === 0;
+      ctx.fillStyle = blink ? '#ff1e1e' : '#7a0808';
+      ctx.fillRect(-21.5, -2.5, 2, 5);
+    }
+
+    // Halo de seguridad y casco del piloto
+    ctx.strokeStyle = '#2b2d34';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 5.2, -1.1, 1.1);
+    ctx.stroke();
+
+    ctx.fillStyle = this.isPlayer ? '#ffd000' : '#ffffff';
+    ctx.beginPath();
+    ctx.arc(-1, 0, 3.3, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.restore();
 
+    // Etiqueta limpia con dorsal y apellido
     ctx.save();
-    ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(this.x - 28, this.y - 26, 56, 13);
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,0.68)';
+    ctx.fillRect(this.x - 28, this.y - 28, 56, 13);
     ctx.fillStyle = this.isPlayer ? '#ffcc00' : '#fff';
-    ctx.fillText(`${this.num} ${this.driverName.split(' ').pop()}`, this.x, this.y - 16);
+    ctx.fillText(`${this.num} ${this.driverName.split(' ').pop()}`, this.x, this.y - 18);
     ctx.restore();
   }
 }
-
-let cars = [], player = null, gameRunning = false, activeGp = CALENDAR_2026[0];
+  let cars = [], player = null, gameRunning = false, activeGp = CALENDAR_2026[0], cameraZoom = 1.0;
 
 function buildFullGrid2026(customPlayerName) {
   const roster = [];
@@ -428,6 +560,7 @@ function buildFullGrid2026(customPlayerName) {
 function setupRace() {
   activeGp = CALENDAR_2026[selectedGpIndex];
   buildCircuit(activeGp);
+  cameraZoom = 1.0;
   const customName = driverNameInput.value.trim();
   const chosenTire = tireSelect.value;
   const chosenMap = mapSelect.value;
@@ -452,13 +585,56 @@ function setupRace() {
   document.getElementById('weather-hud').innerText = currentWeather.name;
 }
 
+function drawScenery(weather) {
+  const isWet = weather.rainPct > 0;
+  sceneryProps.forEach(prop => {
+    ctx.save();
+    ctx.translate(prop.x, prop.y);
+    if (prop.kind === 'tree') {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+      ctx.beginPath(); ctx.arc(6, 7, prop.radius, 0, Math.PI * 2); ctx.fill();
+      const grad = ctx.createRadialGradient(-4, -4, 2, 0, 0, prop.radius);
+      grad.addColorStop(0, isWet ? '#2c5e28' : '#3d8234');
+      grad.addColorStop(1, isWet ? '#142b12' : '#1b3d17');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(0, 0, prop.radius, 0, Math.PI * 2); ctx.fill();
+    } else if (prop.kind === 'dune') {
+      ctx.fillStyle = 'rgba(112, 82, 46, 0.55)';
+      ctx.beginPath(); ctx.ellipse(0, 0, prop.radius * 1.6, prop.radius * 0.85, 0.2, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.fillStyle = '#6e5842';
+      ctx.beginPath(); ctx.arc(0, 0, prop.radius * 0.75, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  });
+}
+
+function drawGrandstand(p0, p1, angle01) {
+  ctx.save();
+  ctx.translate((p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5 - 155);
+  ctx.rotate(angle01);
+  ctx.fillStyle = '#22252c'; ctx.fillRect(-190, -24, 380, 26);
+  ctx.fillStyle = '#e10600'; ctx.fillRect(-190, -28, 380, 5);
+  for (let row = 0; row < 3; row++) {
+    for (let col = -180; col < 180; col += 12) {
+      ctx.fillStyle = ((col + row) % 3 === 0) ? '#ffcc00' : '#d8dce6';
+      ctx.fillRect(col, -19 + row * 6, 6, 4);
+    }
+  }
+  ctx.restore();
+}
+
 function drawTrack() {
   ctx.fillStyle = currentWeather.type === 'desert' ? '#8c6d46' : (currentWeather.rainPct > 0 ? '#1b3819' : '#254d22');
-  ctx.fillRect(-2000, -2000, 4200, 4200);
+  ctx.fillRect(-2200, -2200, 4600, 4600);
+
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.strokeStyle = currentWeather.type === 'desert' ? '#a68558' : '#4a4e54';
+  ctx.lineWidth = TRACK_WIDTH + 44; drawTrackPath(); ctx.stroke();
 
   skidMarks.forEach(s => {
     ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(s.angle);
-    ctx.fillStyle = `rgba(15, 15, 15, ${s.alpha})`;
+    ctx.fillStyle = `rgba(12, 12, 12, ${s.alpha})`;
     ctx.fillRect(-6, -11, 12, 4); ctx.fillRect(-6, 7, 12, 4);
     ctx.restore();
   });
@@ -468,23 +644,30 @@ function drawTrack() {
   ctx.save();
   ctx.translate((p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5 - 105);
   ctx.rotate(angle01);
-  ctx.fillStyle = 'rgba(255, 204, 0, 0.35)'; ctx.fillRect(-160, -22, 320, 44);
+  ctx.fillStyle = 'rgba(255, 204, 0, 0.32)'; ctx.fillRect(-160, -22, 320, 44);
   ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 2; ctx.strokeRect(-160, -22, 320, 44);
   ctx.restore();
 
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = TRACK_WIDTH + 18; drawTrackPath(); ctx.stroke();
+  ctx.strokeStyle = '#f5f5f5'; ctx.lineWidth = TRACK_WIDTH + 18; drawTrackPath(); ctx.stroke();
   ctx.setLineDash([24, 24]); ctx.strokeStyle = '#e10600'; ctx.lineWidth = TRACK_WIDTH + 18; drawTrackPath(); ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.strokeStyle = currentWeather.rainPct > 0 ? '#23262e' : '#323236';
+  ctx.strokeStyle = createAsphaltPattern() || '#323236';
   ctx.lineWidth = TRACK_WIDTH; drawTrackPath(); ctx.stroke();
+
+  if (currentWeather.rainPct > 0) {
+    ctx.strokeStyle = 'rgba(130, 185, 255, 0.14)';
+    ctx.lineWidth = TRACK_WIDTH; drawTrackPath(); ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(10, 10, 12, 0.24)';
+  ctx.lineWidth = TRACK_WIDTH * 0.36; drawTrackPath(); ctx.stroke();
 
   cornerZoneFlags.forEach((isHeavy, idx) => {
     if (!isHeavy) return;
     const pt = trackPoints[idx];
-    ctx.beginPath(); ctx.arc(pt.x, pt.y, 12, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 204, 0, 0.22)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(pt.x, pt.y, 14, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 204, 0, 0.18)'; ctx.fill();
   });
 
   ctx.save();
@@ -495,6 +678,9 @@ function drawTrack() {
     ctx.fillRect(-7, -TRACK_WIDTH / 2 + i * (TRACK_WIDTH / 8), 14, TRACK_WIDTH / 8);
   }
   ctx.restore();
+
+  drawGrandstand(p0, p1, angle01);
+  drawScenery(currentWeather);
 }
 
 function drawRainOverlay() {
@@ -513,6 +699,30 @@ function drawTrackPath() {
   ctx.beginPath(); ctx.moveTo(trackPoints[0].x, trackPoints[0].y);
   for (let i = 1; i < trackPoints.length; i++) ctx.lineTo(trackPoints[i].x, trackPoints[i].y);
   ctx.closePath();
+}
+
+function drawMinimap() {
+  if (!miniCtx || trackPoints.length === 0) return;
+  miniCtx.clearRect(0, 0, miniCanvas.width, miniCanvas.height);
+  const scaleX = 0.042, scaleY = 0.042, ox = 44, oy = 34;
+
+  miniCtx.strokeStyle = 'rgba(255,255,255,0.55)';
+  miniCtx.lineWidth = 2.2;
+  miniCtx.beginPath();
+  trackPoints.forEach((pt, idx) => {
+    const mx = ox + pt.x * scaleX;
+    const my = oy + pt.y * scaleY;
+    if (idx === 0) miniCtx.moveTo(mx, my); else miniCtx.lineTo(mx, my);
+  });
+  miniCtx.closePath();
+  miniCtx.stroke();
+
+  cars.forEach(c => {
+    miniCtx.fillStyle = c.isPlayer ? '#ffcc00' : c.color;
+    miniCtx.beginPath();
+    miniCtx.arc(ox + c.x * scaleX, oy + c.y * scaleY, c.isPlayer ? 3.2 : 1.8, 0, Math.PI * 2);
+    miniCtx.fill();
+  });
 }
 
 function updateHUD() {
@@ -541,6 +751,8 @@ function updateHUD() {
   if (player.isDrifting) driftBadge.innerText = 'DERRAPE · DESGASTE ALTO';
   else if (setupCheck.isSuboptimal) driftBadge.innerText = 'ALERTA: COMPUESTO/MAPA NO IDEAL';
   else driftBadge.innerText = player.getInCornerZone() ? 'ZONA DE CURVA / FRENADA' : '';
+
+  drawMinimap();
   return rank;
 }
 
@@ -563,11 +775,19 @@ function gameLoop() {
   cars.forEach(car => car.update(activeGp, currentWeather));
   updateEngineSound(player.speed, player.baseMaxSpeed, player.isDrifting);
   updateHUD();
+
+  const targetZoom = 1.04 - Math.min(0.16, (player.speed / player.baseMaxSpeed) * 0.15);
+  cameraZoom += (targetZoom - cameraZoom) * 0.08;
+
   ctx.save();
-  ctx.translate(canvas.width / 2 - player.x, canvas.height / 2 - player.y);
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.scale(cameraZoom, cameraZoom);
+  ctx.translate(-player.x, -player.y);
   drawTrack();
   cars.forEach(car => car.draw(ctx));
+  updateAndDrawParticles(ctx);
   ctx.restore();
+
   drawRainOverlay();
   requestAnimationFrame(gameLoop);
 }
@@ -591,4 +811,4 @@ document.getElementById('start-btn').addEventListener('click', () => {
   gameRunning = true;
   gameLoop();
 });
-        
+      
