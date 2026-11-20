@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#111111">
+  <title>F1 Pro Max</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    body, html { width: 100%; height: 100%; overflow: hidden; background: #141414; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #fff; }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    #hud { position: absolute; top: 8px; left: 8px; right: 8px; display: none; justify-content: space-between; gap: 6px; pointer-events: none; z-index: 10; }
+    .hud-box { background: rgba(0, 0, 0, 0.8); padding: 6px 10px; border-radius: 8px; border-left: 4px solid #e10600; font-size: 11px; font-weight: bold; }
+    .bar-container { width: 76px; height: 7px; background: #333; border-radius: 4px; margin-top: 3px; overflow: hidden; }
+    .bar-fill { height: 100%; transition: width 0.15s; }
+    #tire-bar { background: #00d2be; width: 100%; }
+    #fuel-bar { background: #ff8700; width: 100%; }
+    #drift-badge { color: #ffcc00; font-size: 10px; margin-top: 2px; min-height: 13px; }
+    #weather-hud { color: #64c4ff; font-size: 11px; margin-bottom: 2px; }
+
+    #overlay { position: absolute; inset: 0; background: rgba(12, 12, 14, 0.96); display: flex; flex-direction: column; align-items: center; justify-content: flex-start; overflow-y: auto; z-index: 20; text-align: center; padding: 14px; }
+    h1 { font-size: 1.65rem; color: #e10600; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 3px; font-style: italic; }
+    .subtitle { color: #bbb; font-size: 11px; margin-bottom: 10px; }
+    .panel { width: 100%; max-width: 480px; background: #1e1e24; border: 1px solid #333; border-radius: 12px; padding: 11px; margin-bottom: 10px; text-align: left; }
+    .panel label { display: block; font-size: 11px; color: #aaa; text-transform: uppercase; margin-bottom: 4px; font-weight: bold; }
+    select, input[type="text"] { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #444; background: #121216; color: #fff; font-size: 12px; margin-bottom: 9px; outline: none; }
+    select:focus, input[type="text"]:focus { border-color: #e10600; }
+
+    .seat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 9px; }
+    .seat-btn { padding: 7px; border-radius: 8px; border: 1px solid #444; background: #151519; color: #ddd; font-size: 12px; font-weight: bold; cursor: pointer; text-align: center; }
+    .seat-btn.selected { border-color: #ffcc00; background: rgba(255, 204, 0, 0.16); color: #fff; }
+
+    .weather-box { background: #131720; border: 1px solid #2b3b55; border-radius: 8px; padding: 8px 10px; margin-bottom: 9px; display: flex; justify-content: space-between; align-items: center; }
+    .weather-info { font-size: 12px; font-weight: bold; color: #64c4ff; }
+    .weather-sub { font-size: 10px; color: #aaa; margin-top: 2px; }
+    .btn-reroll { background: #2b3b55; color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    button.btn-start { background: #e10600; color: #fff; border: none; padding: 12px 28px; font-size: 1rem; font-weight: bold; border-radius: 28px; cursor: pointer; text-transform: uppercase; box-shadow: 0 4px 15px rgba(225, 6, 0, 0.45); width: 100%; max-width: 480px; }
+    button.btn-start:active { transform: scale(0.97); }
+
+    #controls { position: absolute; bottom: 16px; left: 16px; right: 16px; display: none; justify-content: space-between; z-index: 15; pointer-events: none; }
+    .control-group { display: flex; gap: 14px; pointer-events: auto; }
+    .touch-btn { width: 64px; height: 64px; background: rgba(255, 255, 255, 0.15); border: 2px solid rgba(255, 255, 255, 0.32); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; color: #fff; backdrop-filter: blur(4px); }
+    .touch-btn:active, .touch-btn.active { background: rgba(225, 6, 0, 0.65); border-color: #fff; }
+    #btn-gas { border-color: #00ff66; font-size: 14px; }
+    #btn-brake { border-color: #ff3333; font-size: 12px; }
+    #pit-msg { position: absolute; top: 72px; left: 50%; transform: translateX(-50%); background: #ffcc00; color: #000; padding: 5px 14px; border-radius: 18px; font-weight: bold; font-size: 11px; display: none; z-index: 12; text-align: center; }
+  </style>
+</head>
+<body>
+
+  <div id="hud">
+    <div class="hud-box">
+      <div id="hud-driver">PILOTO</div>
+      <div>POS: <span id="pos-val">1/22</span> | VTA: <span id="lap-val">1/3</span></div>
+      <div style="margin-top:2px; color:#ccc;">VEL: <span id="speed-val">0</span> KM/H</div>
+      <div id="drift-badge"></div>
+    </div>
+    <div class="hud-box">
+      <div id="hud-gp" style="color:#ffcc00; max-width:145px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">GP 2026</div>
+      <div id="weather-hud">CLIMA</div>
+      <div>GOMAS (<span id="hud-tire-type">BLANDO</span>)</div>
+      <div class="bar-container"><div id="tire-bar" class="bar-fill"></div></div>
+      <div style="margin-top:3px;">NAFTA (<span id="hud-map-type">MAPA 1</span>)</div>
+      <div class="bar-container"><div id="fuel-bar" class="bar-fill"></div></div>
+    </div>
+  </div>
+
+  <div id="pit-msg">¡EN BOXES! MONTANDO NEUMÁTICO IDEAL Y CARGANDO NAFTA...</div>
+
+  <div id="overlay">
+    <h1 id="overlay-title">F1 PRO MAX</h1>
+    <div class="subtitle">22 Pilotos · Calendario 2026 · Clima Aleatorio, Mapas Motor y Neumáticos</div>
+
+    <div class="panel" id="setup-panel">
+      <label for="team-select">1. Escudería (11 equipos · 2026)</label>
+      <select id="team-select"></select>
+
+      <label>2. Elige tu asiento en el equipo</label>
+      <div class="seat-row">
+        <button type="button" class="seat-btn selected" id="seat-1-btn">Piloto 1</button>
+        <button type="button" class="seat-btn" id="seat-2-btn">Piloto 2</button>
+      </div>
+
+      <label for="driver-name-input">3. Nombre del piloto (editable)</label>
+      <input type="text" id="driver-name-input" maxlength="22" placeholder="Escribe tu nombre de piloto">
+
+      <label for="gp-select">4. Circuito / Gran Premio (Calendario 2026)</label>
+      <select id="gp-select"></select>
+
+      <label>5. Pronóstico Climático Aleatorio</label>
+      <div class="weather-box">
+        <div>
+          <div class="weather-info" id="weather-preview">Soleado (0% lluvia)</div>
+          <div class="weather-sub" id="weather-hint">Ideal: Mapa Motor Soleado + Gomas Blandas</div>
+        </div>
+        <button type="button" class="btn-reroll" id="reroll-weather-btn">Nuevo Clima</button>
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <label for="tire-select">6. Neumáticos</label>
+          <select id="tire-select">
+            <option value="soft">Blando (Rojo) - Soleado</option>
+            <option value="medium">Medio (Amarillo) - Nuboso</option>
+            <option value="hard">Duro (Blanco) - Desierto</option>
+            <option value="inter">Lluvia Media (Verde) - 1% a 5%</option>
+            <option value="wet">Lluvia Extrema (Azul) - 6% a 10%</option>
+          </select>
+        </div>
+        <div>
+          <label for="map-select">7. Mapa Motor</label>
+          <select id="map-select">
+            <option value="sunny">Mapa 1: Soleado (Max Potencia)</option>
+            <option value="cloudy">Mapa 2: Nuboso (Curva Media)</option>
+            <option value="desert">Mapa 3: Desierto (Térmico/Duro)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <p id="overlay-desc" style="font-size:11px; color:#bbb; max-width:460px; margin-bottom:10px;">
+      Si eliges un neumático o mapa motor que no coincide con el clima, sufrirás mayor desgaste de gomas y pérdida de agarre. En Boxes se monta automáticamente el compuesto ideal para el clima actual.
+    </p>
+
+    <button class="btn-start" id="start-btn">SALIR A PISTA</button>
+  </div>
+
+  <div id="controls">
+    <div class="control-group">
+      <div class="touch-btn" id="btn-left">◀</div>
+      <div class="touch-btn" id="btn-right">▶</div>
+    </div>
+    <div class="control-group">
+      <div class="touch-btn" id="btn-brake">FRENO</div>
+      <div class="touch-btn" id="btn-gas">GAS</div>
+    </div>
+  </div>
+
+  <canvas id="gameCanvas"></canvas>
+
+  <script src="game.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW error:', err));
+      });
+    }
+  </script>
+</body>
+</html>
