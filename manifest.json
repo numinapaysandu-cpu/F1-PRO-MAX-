@@ -1,7 +1,7 @@
 {
   "name": "F1 Pro Max",
   "short_name": "F1 Pro Max",
-  "description": "Juego F1 arcade offline con parrilla 2026, calendario 2026, clima aleatorio y telemetría",
+  "description": "Juego F1 arcade offline con parrilla 2026, calendario 2026, clima aleatorio y telemetria",
   "start_url": "./index.html",
   "display": "fullscreen",
   "orientation": "landscape",
